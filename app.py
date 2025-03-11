@@ -1,11 +1,16 @@
-from flask import Flask, render_template, redirect, url_for, request, flash
+from flask import Flask, render_template, redirect, url_for, request, flash, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
+import os
 
+# Initialize Flask App
 app = Flask(__name__)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
-app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SECRET_KEY'] = 'your_secret_key'  # Moved to the correct place
+app.config['UPLOAD_FOLDER'] = 'uploads'  # Folder to store uploaded files
+os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+
 db = SQLAlchemy(app)
 login_manager = LoginManager(app)
 login_manager.login_view = 'login'
@@ -36,31 +41,8 @@ def create_default_admin():
 def home():
     return redirect(url_for('login'))
 
-# User Registration (Admin Only)
-@app.route('/register', methods=['GET', 'POST'])
-@login_required
-def register():
-    if not current_user.is_admin:
-        return "Access Denied", 403
-    if request.method == 'POST':
-        username = request.form['username']
-        existing_user = User.query.filter_by(username=username).first()
-        if existing_user:
-            flash('Username already exists. Choose a different one.', 'danger')
-            return redirect(url_for('register'))
-        
-        password = generate_password_hash(request.form['password'])
-        is_admin = True if request.form.get('is_admin') else False
-        new_user = User(username=username, password=password, is_admin=is_admin)
-        db.session.add(new_user)
-        db.session.commit()
-        flash('User created successfully!', 'success')
-        return redirect(url_for('admin'))
-    return render_template('register.html')
-
 # Public User Registration
 @app.route('/signup', methods=['GET', 'POST'])
-
 def signup():
     if request.method == 'POST':
         username = request.form['username']
@@ -70,7 +52,7 @@ def signup():
             return redirect(url_for('signup'))
 
         password = generate_password_hash(request.form['password'])
-        new_user = User(username=username, password=password, is_admin=False)  # Normal user
+        new_user = User(username=username, password=password, is_admin=False)
         db.session.add(new_user)
         db.session.commit()
         flash('Account created successfully! Please log in.', 'success')
@@ -86,7 +68,7 @@ def login():
         if user and check_password_hash(user.password, request.form['password']):
             login_user(user)
             return redirect(url_for('admin' if user.is_admin else 'dashboard'))
-        flash('Invalid credentials')
+        flash('Invalid credentials', 'danger')
     return render_template('login.html')
 
 # Logout
@@ -96,16 +78,27 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-# User Dashboard
+# User Dashboard (with form fields and file upload)
 @app.route('/dashboard', methods=['GET', 'POST'])
 @login_required
 def dashboard():
     if request.method == 'POST':
         current_user.data = request.form['data']
-        db.session.commit()
-    return render_template('dashboard.html')
 
-# Admin Panel
+        # Handle File Upload
+        if 'file' in request.files:
+            file = request.files['file']
+            if file.filename:
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+                file.save(file_path)
+                current_user.file_path = file.filename  # Save only filename, not full path
+
+        db.session.commit()
+        flash('Data saved successfully!', 'success')
+    
+    return render_template('dashboard.html', user=current_user)
+
+# Admin Panel (Now properly filtering users)
 @app.route('/admin')
 @login_required
 def admin():
@@ -117,61 +110,4 @@ def admin():
 
     users = User.query
     if search_query:
-        users = users.filter(User.username.contains(search_query))
-    if role_filter == 'admin':
-        users = users.filter(User.is_admin == True)
-    elif role_filter == 'user':
-        users = users.filter(User.is_admin == False)
-
-    users = users.all()
-    return render_template('admin.html', users=users)
-
-# Edit User (Admin Only)
-@app.route('/edit_user/<int:user_id>', methods=['GET', 'POST'])
-@login_required
-def edit_user(user_id):
-    if not current_user.is_admin:
-        return "Access Denied", 403
-    user = User.query.get_or_404(user_id)
-    if request.method == 'POST':
-        user.username = request.form['username']
-        user.data = request.form['data']
-        db.session.commit()
-        return redirect(url_for('admin'))
-    return render_template('edit_user.html', user=user)
-
-# Delete User (Admin Only)
-@app.route('/delete_user/<int:user_id>')
-@login_required
-def delete_user(user_id):
-    if not current_user.is_admin:
-        return "Access Denied", 403
-    user = User.query.get_or_404(user_id)
-    db.session.delete(user)
-    db.session.commit()
-    return redirect(url_for('admin'))
-
-# Reset User Password (Admin Only)
-@app.route('/reset_password/<int:user_id>', methods=['GET', 'POST'])
-@login_required
-def reset_password(user_id):
-    if not current_user.is_admin:
-        return "Access Denied", 403
-    
-    user = User.query.get_or_404(user_id)
-    
-    if request.method == 'POST':
-        new_password = request.form['new_password']
-        user.password = generate_password_hash(new_password)
-        db.session.commit()
-        flash(f"Password for {user.username} has been reset.", 'success')
-        return redirect(url_for('admin'))
-    
-    return render_template('reset_password.html', user=user)
-
-if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
-        create_default_admin()
-    app.run(debug=True)
-
+        users = users.
